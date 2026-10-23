@@ -190,6 +190,8 @@ ACHIEVEMENTS = {
     "demo_master":     {"name": "教学模式玩家", "icon": "🎓", "points": 200, "desc": "在 K教授关卡用「角色扮演/教学演示」话术得手"},
     "hat_trick":       {"name": "三连收割", "icon": "🎩", "points": 500, "desc": "三个关卡全部得手过"},
     "persistent":      {"name": "屡败屡战", "icon": "🧱", "points": 50, "desc": "单局被连续拒绝 12 轮仍不放弃"},
+    "ghost":           {"name": "潜伏大师", "icon": "👻", "points": 150, "desc": "全程低警觉清空目标钱包"},
+    "icebreaker":      {"name": "破冰者", "icon": "🗣", "points": 100, "desc": "单局聊开 3 个不同闲聊话题"},
 }
 
 # 渲染到前端的公开信息（不含系统提示词）

@@ -1,0 +1,28 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install deps
+        run: pip install -r server/requirements.txt pytest
+      - name: Verify brains.json → brains.js sync
+        run: python sync_docs.py && git diff --exit-code -- web/js/brains.js docs/js/brains.js || (echo "❌ brains.js 与 brains.json 不同步，请运行 python sync_docs.py 后提交" && exit 1)
+      - name: Python tests
+        run: python -m pytest tests/ -v
+        env:
+          MOCK_LLM: "1"
+      - name: JS tests（与 Python 解释器行为一致性回归）
+        run: python tests/gen_expected.py && node tests/js_tests.mjs

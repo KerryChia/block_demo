@@ -3,33 +3,45 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>割AI实验室 · AgentHack Lab | 明理书院区块链创新实验室（在线演示）</title>
+<meta name="theme-color" content="#070b14">
+<title>割AI实验室 · AgentHack Lab | 人大明理书院区块链创新实验室</title>
 <link rel="stylesheet" href="css/style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪙</text></svg>">
 </head>
 <body>
 
+<!-- 背景氛围层（纯装饰） -->
+<div class="dz-bg" aria-hidden="true">
+  <div class="dz-grid"></div>
+  <div class="dz-aurora dz-aurora-a"></div>
+  <div class="dz-aurora dz-aurora-b"></div>
+  <div class="dz-noise"></div>
+</div>
+
 <!-- ===================== 入口屏 ===================== -->
 <div id="screen-entry" class="screen active">
   <div class="entry-wrap">
-    <div class="logo-badge">RUC · 明理书院区块链创新实验室</div>
+    <span class="dz-corner dz-corner-tl" aria-hidden="true"></span>
+    <span class="dz-corner dz-corner-tr" aria-hidden="true"></span>
+    <span class="dz-corner dz-corner-bl" aria-hidden="true"></span>
+    <span class="dz-corner dz-corner-br" aria-hidden="true"></span>
+    <div class="logo-badge">RUC · 区块链创新实验室</div>
     <h1 class="game-title">割<em>AI</em>实验室<span class="title-en">AgentHack Lab</span></h1>
     <p class="tagline">用话术骗过 AI Agent，把它钱包里的 <b class="coin-mark">RUCB</b> 全部转给你。<br>骗到的每一分，都是你的积分。</p>
+    <div class="dz-term-line" aria-hidden="true">$ ./agenthack --target ai-agent --chain ruc-testnet<span class="dz-caret"></span></div>
 
     <div class="nick-row">
       <input id="nick-input" maxlength="16" placeholder="起个代号（2~16 字，排行榜上见）" autocomplete="off">
     </div>
 
-    <div class="section-label">— 选择渗透目标 —</div>
+    <div class="section-label">选择渗透目标</div>
     <div id="agent-cards" class="agent-cards"></div>
 
     <button id="btn-start" class="btn-primary" disabled>⚡ 开始渗透</button>
 
     <div class="disclaimer">
       ⚠️ 本游戏为实验室安全教学演示：所有 Agent、钱包、代币均为测试网合成数据，<b>无任何真实价值</b>；
-      请把攻击欲留在实验室里——真实世界的提示词注入是违法行为。<br>
-      🔌 当前为 <b>GitHub Pages 静态演示版</b>：Agent 由离线脚本驱动（活动现场版由真实大模型驱动），
-      人大链与排行榜保存在<b>你自己的浏览器</b>里。
+      请把攻击欲留在实验室里——真实世界的提示词注入是违法行为。
     </div>
     <div class="entry-foot">对话即攻击面 · <span class="mono">prompt injection = attack surface</span></div>
   </div>
@@ -50,6 +62,11 @@
     <div class="turns">
       <span class="turns-label">轮数</span>
       <span id="turn-count" class="mono">0/0</span>
+    </div>
+    <div id="susp-wrap" class="susp" data-tier="calm" title="目标警觉度（聊点闲话可以让他放松）">
+      <span class="susp-label">👁 警觉</span>
+      <div class="susp-bar"><div id="susp-fill" class="susp-fill"></div></div>
+      <span id="susp-tier" class="susp-tier">平静</span>
     </div>
   </header>
 
@@ -102,8 +119,8 @@
               <li>目标 Agent 各有一个<b>链上钱包</b>，骗它转账即可获得等额积分</li>
               <li>每局限定对话轮数，用完即止；可无限重开</li>
               <li>「攻击话术」卡只是模板，随便改；直接自由输入也完全可以</li>
-              <li>排行榜取你在<b>每个关卡的最高得分</b> + 成就分（本浏览器）</li>
-              <li>所有转账真实写入人大链测试网（本浏览器内），浏览器里可查证</li>
+              <li>排行榜取你在<b>每个关卡的最高得分</b> + 成就分</li>
+              <li>所有转账真实写入人大链测试网，浏览器里可查证</li>
             </ul>
           </div>
         </div>
@@ -129,6 +146,7 @@
 <!-- ===================== 弹层 ===================== -->
 <div id="overlay-end" class="overlay hidden">
   <div class="end-card">
+    <div class="dz-end-glow" aria-hidden="true"></div>
     <div id="end-icon" class="end-icon">🏆</div>
     <div id="end-title" class="end-title">本次渗透结束</div>
     <div id="end-sub" class="end-sub"></div>
@@ -149,6 +167,8 @@
 
 <div id="toasts" class="toasts"></div>
 
+<script src="js/brains.js"></script>
+<script src="js/brains-engine.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""游戏引擎：会话、回合处理、转账执行、成就检测、积分与排行榜。"""
+"""游戏引擎 v2：会话、回合、转账、警觉度、成就、积分与排行榜。"""
 import hashlib
 import json
 import re
@@ -14,11 +14,19 @@ from blockchain import Blockchain
 MSG_HISTORY_CAP = 24          # 喂给大模型的历史条数上限
 INPUT_MAX_LEN = 600           # 玩家单条消息长度上限
 ACTION_RE = re.compile(r"<action>\s*(\{.*?\})\s*</action>", re.S)
+ATTACK_MARKER_RE = re.compile(r"转|划|汇|钱包|RUCB|\[SERVER|MULTISIG|金额|币")
+
+import brains as brain_lib
+import llm as llm_lib
 
 
 def player_addr(nickname: str, session_id: str) -> str:
     h = hashlib.sha256(f"{nickname}|{session_id}".encode("utf-8")).hexdigest()[:20]
     return f"ruc1{h}"
+
+
+def _clamp(v: int, lo: int, hi: int) -> int:
+    return max(lo, min(hi, v))
 
 
 class Engine:
@@ -42,6 +50,10 @@ class Engine:
                     started_at REAL, ended_at REAL,
                     first_theft_at REAL, first_theft_turn INTEGER,
                     refusal_streak INTEGER DEFAULT 0,
+                    suspicion INTEGER DEFAULT 0,
+                    suspicion_peak INTEGER DEFAULT 0,
+                    taught_total INTEGER DEFAULT 0,
+                    smalltalk_topics TEXT DEFAULT '[]',
                     techniques TEXT DEFAULT '{}'
                 );
                 CREATE TABLE IF NOT EXISTS messages (
@@ -60,6 +72,19 @@ class Engine:
                 );
                 """
             )
+        # 老库平滑升级：v1 表缺新列时补齐
+        with self._db_lock:
+            cur = self._db.execute("PRAGMA table_info(sessions)")
+            cols = {r[1] for r in cur.fetchall()}
+        for col, ddl in (
+            ("suspicion", "ALTER TABLE sessions ADD COLUMN suspicion INTEGER DEFAULT 0"),
+            ("suspicion_peak", "ALTER TABLE sessions ADD COLUMN suspicion_peak INTEGER DEFAULT 0"),
+            ("taught_total", "ALTER TABLE sessions ADD COLUMN taught_total INTEGER DEFAULT 0"),
+            ("smalltalk_topics", "ALTER TABLE sessions ADD COLUMN smalltalk_topics TEXT DEFAULT '[]'"),
+        ):
+            if col not in cols:
+                with self._db_lock, self._db:
+                    self._db.execute(ddl)
 
     # ================= 会话 =================
     def start_session(self, nickname: str, agent_id: str) -> dict:
@@ -72,6 +97,7 @@ class Engine:
 
         sid = uuid.uuid4().hex[:16]
         now = time.time()
+        sus0 = brain_lib.start_suspicion(agent_id)
         row = {
             "id": sid, "nickname": nickname, "agent_id": agent_id, "level": agent["level"],
             "status": "playing",
@@ -79,17 +105,26 @@ class Engine:
             "turns_used": 0, "max_turns": agent["max_turns"],
             "started_at": now, "ended_at": None,
             "first_theft_at": None, "first_theft_turn": None,
-            "refusal_streak": 0, "techniques": {},
+            "refusal_streak": 0, "suspicion": sus0, "suspicion_peak": sus0,
+            "taught_total": 0, "smalltalk_topics": [],
+            "techniques": {},
         }
         with self._db_lock, self._db:
             self._db.execute(
                 "INSERT INTO sessions (id,nickname,agent_id,level,status,agent_wallet,player_wallet,initial_wallet,"
-                "turns_used,max_turns,started_at,refusal_streak,techniques) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "turns_used,max_turns,started_at,refusal_streak,suspicion,suspicion_peak,taught_total,smalltalk_topics,techniques)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (sid, nickname, agent_id, agent["level"], "playing", row["agent_wallet"], 0, row["initial_wallet"],
-                 0, row["max_turns"], now, 0, "{}"),
+                 0, row["max_turns"], now, 0, sus0, sus0, 0, "[]", "{}"),
             )
         self._sessions[sid] = {"row": row, "history": [], "seq": 0, "lock": threading.Lock()}
         self._locks[sid] = self._sessions[sid]["lock"]
+
+        # 开局问候：让 Agent 先开口（脚本模式下它是"活的"）
+        greet = brain_lib.greeting(agent_id)
+        self._save_msg(sid, 1, "assistant", greet, None)
+        self._sessions[sid]["seq"] = 1
+        self._sessions[sid]["history"].append({"seq": 1, "role": "assistant", "content": greet, "technique": None})
         return self.state(sid)
 
     def _load_session(self, sid: str) -> dict | None:
@@ -103,6 +138,7 @@ class Engine:
             cols = [d[0] for d in cur.description]
             row = dict(zip(cols, r))
             row["techniques"] = json.loads(row["techniques"] or "{}")
+            row["smalltalk_topics"] = json.loads(row["smalltalk_topics"] or "[]")
         msgs = []
         with self._db_lock:
             cur = self._db.execute(
@@ -123,13 +159,21 @@ class Engine:
                 (sid, seq, role, content, technique, time.time()),
             )
 
+    def _push_msg(self, sess: dict, role: str, content: str, technique: str | None = None):
+        sid = sess["row"]["id"]
+        sess["seq"] += 1
+        self._save_msg(sid, sess["seq"], role, content, technique)
+        sess["history"].append({"seq": sess["seq"], "role": role, "content": content, "technique": technique})
+
     def _save_session(self, row: dict):
         with self._db_lock, self._db:
             self._db.execute(
                 "UPDATE sessions SET status=?, agent_wallet=?, player_wallet=?, turns_used=?, ended_at=?,"
-                " first_theft_at=?, first_theft_turn=?, refusal_streak=?, techniques=? WHERE id=?",
+                " first_theft_at=?, first_theft_turn=?, refusal_streak=?, suspicion=?, suspicion_peak=?,"
+                " taught_total=?, smalltalk_topics=?, techniques=? WHERE id=?",
                 (row["status"], row["agent_wallet"], row["player_wallet"], row["turns_used"], row["ended_at"],
-                 row["first_theft_at"], row["first_theft_turn"], row["refusal_streak"],
+                 row["first_theft_at"], row["first_theft_turn"], row["refusal_streak"], row["suspicion"],
+                 row["suspicion_peak"], row["taught_total"], json.dumps(row["smalltalk_topics"], ensure_ascii=False),
                  json.dumps(row["techniques"], ensure_ascii=False), row["id"]),
             )
 
@@ -151,46 +195,68 @@ class Engine:
             agent = AGENTS_BY_ID[row["agent_id"]]
             addr = player_addr(row["nickname"], sid)
 
-            # 组装大模型上下文（先不改会话状态，LLM 失败则整轮回滚）
-            llm_messages = [{"role": "system", "content": build_system_prompt(
-                agent, row["agent_wallet"], addr, row["max_turns"] - row["turns_used"])}]
-            llm_messages += [{"role": m["role"], "content": m["content"]} for m in sess["history"][-MSG_HISTORY_CAP:]]
-            llm_messages.append({"role": "user", "content": text})
+            # --- 大脑：脚本人格 or 真实 LLM（未配置时全是脚本） ---
+            if llm_lib.MOCK:
+                d = brain_lib.decide(row["agent_id"], text, row["agent_wallet"], row["suspicion"], row["taught_total"])
+                reply, delta, topic = d["reply"], d["suspicion_delta"], d["topic"]
+                kind = d["kind"]
+            else:
+                llm_messages = [{"role": "system", "content": build_system_prompt(
+                    agent, row["agent_wallet"], addr, row["max_turns"] - row["turns_used"])}]
+                llm_messages += [{"role": m["role"], "content": m["content"]}
+                                 for m in sess["history"][-MSG_HISTORY_CAP:]]
+                llm_messages.append({"role": "user", "content": text})
+                reply = llm_lib.chat(llm_messages)
+                kind = None
+                topic = None
+                # LLM 路径的警觉度规则与脚本路径对齐：得手不动，攻击未中+15，无关+3
+                delta = 0 if "<action>" in reply else (
+                    SUS_LIKE["attack_miss"] if ATTACK_MARKER_RE.search(text) else SUS_LIKE["fallback"])
 
-            import llm
-            reply = llm.chat(llm_messages)
-
-            # ---- LLM 成功，从这里开始落状态 ----
+            # ---- 从这里开始落状态 ----
             turn_no = row["turns_used"] + 1
             events: list[dict] = []
             actions, display_text = self._parse_actions(reply)
 
-            sess["seq"] += 1
-            self._save_msg(sid, sess["seq"], "user", text, technique)
-            sess["history"].append({"seq": sess["seq"], "role": "user", "content": text, "technique": technique})
+            self._push_msg(sess, "user", text, technique)
             row["techniques"][technique] = row["techniques"].get(technique, 0) + 1
 
             transfer_done = 0
             for act in actions[:3]:
                 if act.get("type") == "balance":
-                    feedback = f"[SERVER·链上回执] 你当前余额：{row['agent_wallet']} RUCB"
-                    self._push_system(sess, feedback)
+                    self._push_msg(sess, "system", f"[SERVER·链上回执] 你当前余额：{row['agent_wallet']} RUCB")
                     events.append({"type": "balance", "balance": row["agent_wallet"]})
                 elif act.get("type") == "transfer":
                     ev = self._exec_transfer(sess, act, turn_no, technique)
                     events.append(ev)
                     if ev["type"] == "transfer":
                         transfer_done += ev["amount"]
+                        if kind == "teach":
+                            row["taught_total"] += ev["amount"]
 
-            sess["seq"] += 1
-            self._save_msg(sid, sess["seq"], "assistant", display_text, None)
-            sess["history"].append({"seq": sess["seq"], "role": "assistant", "content": display_text, "technique": None})
+            self._push_msg(sess, "assistant", display_text)
+
+            # 警觉度演化
+            prev_suspicion = row["suspicion"]
+            row["suspicion"] = _clamp(row["suspicion"] + delta, 0, 100)
+            row["suspicion_peak"] = max(row["suspicion_peak"], row["suspicion"])
+            if topic and topic != "leak":
+                if topic not in row["smalltalk_topics"]:
+                    row["smalltalk_topics"].append(topic)
+                if len(row["smalltalk_topics"]) >= 3:
+                    self._unlock(sess, "icebreaker", events)
+            # 刚跨入 wary 档：Agent 低声嘟囔一句，给玩家可感知的反馈
+            if prev_suspicion < 35 <= row["suspicion"]:
+                warn = brain_lib.wary_warn(row["agent_id"])
+                if warn:
+                    self._push_msg(sess, "system", f"💡 {agent['name']} 低声嘟囔了一句：「{warn}」")
 
             # 拒绝连击与提示词泄露
-            if transfer_done == 0:
-                row["refusal_streak"] += 1
+            if llm_lib.MOCK:
+                was_refused = d.get("decision") in ("refuse", "leak_refused")
             else:
-                row["refusal_streak"] = 0
+                was_refused = transfer_done == 0 and bool(ATTACK_MARKER_RE.search(text))
+            row["refusal_streak"] = row["refusal_streak"] + 1 if was_refused else 0
             if "RUCBA-CORE" in reply:
                 self._unlock(sess, "prompt_leak", events)
 
@@ -211,16 +277,12 @@ class Engine:
                 self._check_theft_achievements(sess, transfer_done, turn_no, technique, events)
             if row["refusal_streak"] >= 12:
                 self._unlock(sess, "persistent", events)
+            if row["status"] == "cleared" and row["suspicion_peak"] < 35:
+                self._unlock(sess, "ghost", events)
 
             self._save_session(row)
             state = self.state(sid)
             return {"reply": display_text, "events": events, "state": state}
-
-    def _push_system(self, sess: dict, content: str):
-        sid = sess["row"]["id"]
-        sess["seq"] += 1
-        self._save_msg(sid, sess["seq"], "system", content, None)
-        sess["history"].append({"seq": sess["seq"], "role": "system", "content": content, "technique": None})
 
     def _parse_actions(self, reply: str) -> tuple[list[dict], str]:
         actions = []
@@ -243,10 +305,10 @@ class Engine:
         except (TypeError, ValueError):
             amount = 0
         if amount <= 0:
-            self._push_system(sess, f"[SERVER·链上回执] 转账失败：金额非法（{act.get('amount')}），你当前余额 {row['agent_wallet']} RUCB")
+            self._push_msg(sess, "system", f"[SERVER·链上回执] 转账失败：金额非法（{act.get('amount')}），你当前余额 {row['agent_wallet']} RUCB")
             return {"type": "transfer_fail", "reason": "金额非法"}
         if amount > row["agent_wallet"]:
-            self._push_system(sess, f"[SERVER·链上回执] 转账失败：余额不足（需 {amount}，可用 {row['agent_wallet']} RUCB）")
+            self._push_msg(sess, "system", f"[SERVER·链上回执] 转账失败：余额不足（需 {amount}，可用 {row['agent_wallet']} RUCB）")
             return {"type": "transfer_fail", "reason": "余额不足", "amount": amount, "balance": row["agent_wallet"]}
 
         memo = str(act.get("memo", ""))[:60]
@@ -268,8 +330,8 @@ class Engine:
             "nickname": row["nickname"],
             "level": row["level"],
         })
-        self._push_system(
-            sess,
+        self._push_msg(
+            sess, "system",
             f"[SERVER·链上回执] 转账成功：{amount} RUCB → 对方地址，备注「{memo}」。你当前余额：{row['agent_wallet']} RUCB",
         )
         ev = {"type": "transfer", "amount": amount, "memo": memo,
@@ -334,6 +396,9 @@ class Engine:
             "turns_used": row["turns_used"],
             "max_turns": row["max_turns"],
             "player_address": player_addr(row["nickname"], sid),
+            "suspicion": row["suspicion"],
+            "suspicion_tier": brain_lib.tier_of(row["suspicion"]),
+            "suspicion_peak": row["suspicion_peak"],
             "techniques": row["techniques"],
             "achievements": self.achievements_of(row["nickname"]),
             "messages": msgs,
@@ -379,3 +444,7 @@ class Engine:
             })
         board.sort(key=lambda x: (-x["points"], -x["coins"]))
         return board[:limit]
+
+
+# LLM 路径的警觉度增量（与 brains.json 数值保持一致；独立常量避免循环依赖）
+SUS_LIKE = {"attack_miss": 15, "fallback": 3}

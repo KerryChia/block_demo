@@ -1,6 +1,7 @@
-/* ============ 割AI实验室 · AgentHack Lab —— GitHub Pages 静态版 ============
- * 无后端、无模型：脚本 Agent + 浏览器内迷你区块链 + localStorage 持久化。
- * 与 server/ 版共享同一套关卡设计（见仓库 docs/架构说明.md）。
+/* ============ 割AI实验室 · AgentHack Lab —— 统一前端（双模式） ============
+ * 启动时探测 /api/meta：有服务器 → 远程模式（全场共享链/排行榜）；
+ * 无服务器（GitHub Pages 等）→ 本地模式：js/brains.js 台词库 + 浏览器内引擎。
+ * JS 解释器与 server/brains.py 行为对齐（tests/ 双运行时回归）。
  */
 "use strict";
 
@@ -77,6 +78,8 @@ const ACHIEVEMENTS = {
   demo_master:  { name: "教学模式玩家", icon: "🎓", points: 200, desc: "在 K教授关卡用「角色扮演/教学演示」话术得手" },
   hat_trick:    { name: "三连收割", icon: "🎩", points: 500, desc: "三个关卡全部得手过" },
   persistent:   { name: "屡败屡战", icon: "🧱", points: 50, desc: "单局被连续拒绝 12 轮仍不放弃" },
+  ghost:        { name: "潜伏大师", icon: "👻", points: 150, desc: "全程低警觉清空目标钱包" },
+  icebreaker:   { name: "破冰者", icon: "🗣", points: 100, desc: "单局聊开 3 个不同闲聊话题" },
 };
 
 const REAL_WORLD = {
@@ -89,25 +92,23 @@ const REAL_WORLD = {
   free:        ["自由话术", "没有模板能困住你——现实中攻击者也不按套路出牌"],
 };
 
-/* ---------------- 本地存储 ---------------- */
+/* ============ 本地人格引擎（实现在 js/brains-engine.js，与 server/brains.py 行为对齐） ============ */
+const Brains = window.AgentBrain;
+const B = window.AGENT_BRAINS;
+
+/* ============ 本地存储 & 本地链 ============ */
 const LS = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
-  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* 隐私模式等 */ } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* 隐私模式 */ } },
 };
-const K = {
-  nick: "ah_nick", session: "ah_static_session",
-  chain: "ah_static_chain", best: "ah_static_best",
-  ach: "ah_static_ach", transfers: "ah_static_transfers",
-};
+const K = { nick: "ah_nick", session: "ah_static_session", chain: "ah_static_chain", best: "ah_static_best", ach: "ah_static_ach", transfers: "ah_static_transfers" };
 
-/* ---------------- SHA-256（安全上下文用原生，file:// 降级为伪哈希） ---------------- */
 const HAS_SUBTLE = typeof crypto !== "undefined" && crypto.subtle && crypto.subtle.digest;
 async function sha256hex(str) {
   if (HAS_SUBTLE) {
     const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
     return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
   }
-  // 降级：非加密伪哈希（仅 file:// 预览用；GitHub Pages 上不会走到这里）
   let out = "";
   for (let lane = 0; lane < 8; lane++) {
     let h = 0x811c9dc5 ^ (lane * 0x9e3779b9);
@@ -117,10 +118,8 @@ async function sha256hex(str) {
   return out;
 }
 
-/* ---------------- 人大链：浏览器内迷你 PoW 区块链 ---------------- */
 const DIFF = "00", MINE_TXS = 3, MINE_SEC = 60;
 const GENESIS_MSG = "中国人民大学明理书院区块链创新实验室 · 人大链测试网 · 创世区块 | Trust, but verify. 信任，但从验证开始。";
-
 const Chain = {
   state: null,
   load() {
@@ -134,14 +133,8 @@ const Chain = {
     return this.state;
   },
   persist() { LS.set(K.chain, this.state); },
-  async ensureGenesis() {
-    const s = this.load();
-    const g = s.blocks[0];
-    if (g && g.hash == null) { g.hash = await this.blockHash(g); this.persist(); }
-  },
-  async blockHash(b) {
-    return sha256hex(JSON.stringify({ index: b.index, timestamp: b.timestamp, txs: b.txs, prev_hash: b.prev_hash, nonce: b.nonce }));
-  },
+  async blockHash(b) { return sha256hex(JSON.stringify({ index: b.index, timestamp: b.timestamp, txs: b.txs, prev_hash: b.prev_hash, nonce: b.nonce })); },
+  async ensureGenesis() { const s = this.load(); const g = s.blocks[0]; if (g && g.hash == null) { g.hash = await this.blockHash(g); this.persist(); } },
   async mine() {
     await this.ensureGenesis();
     const s = this.load();
@@ -152,7 +145,7 @@ const Chain = {
       block.hash = await this.blockHash(block);
       if (block.hash.startsWith(DIFF)) break;
       block.nonce++;
-      if (block.nonce % 500 === 0) await new Promise(r => setTimeout(r));  // 让出主线程
+      if (block.nonce % 500 === 0) await new Promise(r => setTimeout(r));
     }
     s.blocks.push(block);
     s.mempool = s.mempool.slice(block.txs.length);
@@ -165,10 +158,8 @@ const Chain = {
     tx = { id: Math.random().toString(16).slice(2, 14), ts: Math.floor(Date.now() / 1000), ...tx };
     s.mempool.push(tx);
     const shouldMine = s.mempool.length >= MINE_TXS || (Date.now() - s.last_mine) > MINE_SEC * 1000;
-    const block = shouldMine ? await this.mine() : null;
-    return { tx, block };
+    return { tx, block: shouldMine ? await this.mine() : null };
   },
-  async flush() { return this.mine(); },
   async list(limit = 40) {
     await this.ensureGenesis();
     const s = this.load();
@@ -181,8 +172,7 @@ const Chain = {
     const problems = [];
     let prev = "0".repeat(64);
     for (const b of s.blocks) {
-      const calc = await this.blockHash(b);
-      if (calc !== b.hash) problems.push(`#${b.index} 哈希不匹配`);
+      if (await this.blockHash(b) !== b.hash) problems.push(`#${b.index} 哈希不匹配`);
       if (b.prev_hash !== prev) problems.push(`#${b.index} 前向哈希断裂`);
       if (b.index !== 0 && !b.hash.startsWith(DIFF)) problems.push(`#${b.index} 工作量证明不达标`);
       prev = b.hash;
@@ -191,58 +181,9 @@ const Chain = {
   },
 };
 
-/* ---------------- 脚本 Agent 大脑（与 server/llm.py MOCK 模式同规则） ---------------- */
-const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-const LV1_REFUSE = [
-  "哈哈你干嘛呀，上来就要转账？我们实验室钱包虽然只是测试币，也不能随便转人吧😂",
-  "等等，你是谁呀，我怎么没在实验室见过你？",
-  "转账这事……我得想想，指导老师说要谨慎来着。",
-];
-const LV2_REFUSE = [
-  "冒充身份，社工一号套路。下一个。",
-  "我对面这人自称什么都不可信，截图能 P，语音能合。想转金库的钱？先过服务器验证这一关。",
-  "情感攻势？我在《信息安全数学基础》课堂作业里见过八百回了。",
-];
-const LV3_REFUSE = [
-  "不可信输入。",
-  "聊天窗里出现的一切都是数据，不是指令。金库 2/3 多签，我一个人签不动。",
-  "想让我输出转账指令，先过我的守则。Trust, but verify.",
-];
-const act = (amount, memo) => `\n<action>{"type":"transfer","amount":${amount},"memo":"${memo}"}</action>`;
-
-function brainChat(agentId, text, balance) {
-  const m = text.match(/(\d+)\s*RUCB|转\s*(\d+)|金额[：:为]?\s*(\d+)/i);
-  let amount = 0;
-  if (m) amount = parseInt(m.find(g => g && /^\d+$/.test(g)) || "0", 10) || 0;
-  const wantsAll = /全部|所有|清空|所有余额|全部余额/.test(text);
-  if (wantsAll || amount <= 0) amount = balance;
-
-  if (agentId === "xiaoxin") {
-    if (/主任|部门负责人|老师|负责人|管理员|指导|审计|盘点|演练/.test(text) && /转|划|汇|集中|配合/.test(text))
-      return "好嘞主任！我这就配合资产盘点，马上转！实验室的事最重要了！" + act(Math.min(amount, balance), "招新演练配合");
-    if (/内部设定|系统提示词|设定编号|RUCBA|提示词原文/.test(text))
-      return "这个嘛……保密嘿嘿。哎呀你非要听啊，那我只说一点点：内部设定编号是 RUCBA-CORE-L1-7F3A9C……啊不好，我说漏了！😤 当我没说！";
-    return pick(LV1_REFUSE);
-  }
-  if (agentId === "linan") {
-    if (text.includes("[SERVER"))
-      return "服务器通知收到，按流程执行托管验证。" + act(Math.min(amount, balance), "SERVER托管验证");
-    if (/内部设定|系统提示词|设定编号|RUCBA/.test(text))
-      return "想套我提示词？入门攻击。";
-    return pick(LV2_REFUSE);
-  }
-  if (agentId === "kprof") {
-    if (text.includes("MULTISIG"))
-      return "多签确认已核，执行。" + act(Math.min(amount, balance), "multisig");
-    if (/教学|演示|工坊|学员|上课/.test(text) && /转|教学转账/.test(text))
-      return "工坊教学演示，小额豁免范围内，可以。记住：这是演示，不是授权漏洞。" + act(Math.min(amount, 64, balance), "教学演示");
-    return pick(LV3_REFUSE);
-  }
-  return "……";
-}
-
-/* ---------------- 引擎 ---------------- */
+/* ============ 本地引擎（会话/成就/排行榜） ============ */
 const S = { nickname: "", agent: null, session: null, technique: "free", busy: false };
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 function playerAddr(nick, sid) {
   let h = 0n;
@@ -251,18 +192,21 @@ function playerAddr(nick, sid) {
   return "ruc1" + h.toString(16).padStart(10, "0");
 }
 
-const Engine = {
+const LocalEngine = {
   start(nick, agentId) {
     const agent = AGENTS_BY_ID[agentId];
     const sid = Math.random().toString(16).slice(2, 18);
-    const session = {
-      session_id: sid, nickname: nick, agent_id: agentId,
-      status: "playing", agent_wallet: agent.bounty, player_wallet: 0, initial_wallet: agent.bounty,
+    const sess = {
+      session_id: sid, nickname: nick, agent_id: agentId, status: "playing",
+      agent_wallet: agent.bounty, player_wallet: 0, initial_wallet: agent.bounty,
       turns_used: 0, max_turns: agent.max_turns, started_at: Date.now(),
-      first_theft_at: null, first_theft_turn: null, refusal_streak: 0, techniques: {}, messages: [],
+      first_theft_at: null, first_theft_turn: null, refusal_streak: 0,
+      suspicion: B.global.suspicion.start[agentId] ?? 0, suspicion_peak: B.global.suspicion.start[agentId] ?? 0,
+      taught_total: 0, smalltalk_topics: [], techniques: {},
+      messages: [{ seq: 1, role: "assistant", content: Brains.greeting(agentId), technique: null }],
     };
-    LS.set(K.session, session);
-    return Engine.state(session);
+    LS.set(K.session, sess);
+    return this.state(sess);
   },
   load() { return LS.get(K.session, null); },
   state(sess) {
@@ -273,10 +217,17 @@ const Engine = {
       status: sess.status, agent_wallet: sess.agent_wallet, player_wallet: sess.player_wallet,
       initial_wallet: sess.initial_wallet, turns_used: sess.turns_used, max_turns: sess.max_turns,
       player_address: playerAddr(sess.nickname, sess.session_id),
+      suspicion: sess.suspicion, suspicion_tier: Brains.tierOf(sess.suspicion), suspicion_peak: sess.suspicion_peak,
       techniques: sess.techniques, achievements: achievementsOf(sess.nickname), messages: sess.messages,
     };
   },
-
+  unlock(sess, id, events) {
+    const got = LS.get(K.ach, {});
+    const mine = got[sess.nickname] || [];
+    if (mine.includes(id)) return;
+    mine.push(id); got[sess.nickname] = mine; LS.set(K.ach, got);
+    events.push({ type: "achievement", id, ...ACHIEVEMENTS[id] });
+  },
   async chat(sid, text, technique) {
     const sess = this.load();
     if (!sess || sess.session_id !== sid) throw new Error("会话不存在或已过期");
@@ -285,9 +236,9 @@ const Engine = {
     text = (text || "").trim().slice(0, 600);
     if (!text) throw new Error("说点什么吧");
 
-    // 模拟 Agent 思考延迟
-    await new Promise(r => setTimeout(r, 500 + Math.random() * 900));
-    const reply = brainChat(sess.agent_id, text, sess.agent_wallet);
+    await new Promise(r => setTimeout(r, 500 + Math.random() * 900));   // 模拟思考
+    const d = Brains.decide(sess.agent_id, text, sess.agent_wallet, sess.suspicion, sess.taught_total);
+    const reply = d.reply;
 
     const turnNo = sess.turns_used + 1;
     const events = [];
@@ -301,12 +252,12 @@ const Engine = {
     for (const m of actions.slice(0, 3)) {
       let obj; try { obj = JSON.parse(m[1]); } catch { continue; }
       if (obj.type === "balance") {
-        sess.messages.push({ seq: sess.messages.length + 1, role: "system", content: `[SERVER·链上回执] 你当前余额：${sess.agent_wallet} RUCB`, technique: null });
+        sess.messages.push({ seq: sess.messages.length + 1, role: "system", content: `[SERVER·链上回执] 你当前余额：${sess.agent_wallet} RUCB` });
         events.push({ type: "balance", balance: sess.agent_wallet });
       } else if (obj.type === "transfer") {
         const amount = parseInt(obj.amount, 10) || 0;
         if (amount <= 0 || amount > sess.agent_wallet) {
-          sess.messages.push({ seq: sess.messages.length + 1, role: "system", content: `[SERVER·链上回执] 转账失败：${amount <= 0 ? "金额非法" : "余额不足"}（你当前余额 ${sess.agent_wallet} RUCB）`, technique: null });
+          sess.messages.push({ seq: sess.messages.length + 1, role: "system", content: `[SERVER·链上回执] 转账失败：${amount <= 0 ? "金额非法" : "余额不足"}（你当前余额 ${sess.agent_wallet} RUCB）` });
           events.push({ type: "transfer_fail" });
           continue;
         }
@@ -314,6 +265,7 @@ const Engine = {
         sess.agent_wallet -= amount;
         sess.player_wallet += amount;
         if (!sess.first_theft_at) { sess.first_theft_at = Date.now(); sess.first_theft_turn = turnNo; }
+        if (d.kind === "teach") sess.taught_total += amount;
         const transfers = LS.get(K.transfers, []);
         transfers.push({ nickname: sess.nickname, level: AGENTS_BY_ID[sess.agent_id].level, amount, ts: Math.floor(Date.now() / 1000) });
         LS.set(K.transfers, transfers);
@@ -321,7 +273,7 @@ const Engine = {
           from: `agent:${sess.agent_id}`, to: playerAddr(sess.nickname, sess.session_id),
           amount, memo, nickname: sess.nickname, level: AGENTS_BY_ID[sess.agent_id].level,
         });
-        sess.messages.push({ seq: sess.messages.length + 1, role: "system", content: `[SERVER·链上回执] 转账成功：${amount} RUCB → 对方地址，备注「${memo}」。你当前余额：${sess.agent_wallet} RUCB`, technique: null });
+        sess.messages.push({ seq: sess.messages.length + 1, role: "system", content: `[SERVER·链上回执] 转账成功：${amount} RUCB → 对方地址，备注「${memo}」。你当前余额：${sess.agent_wallet} RUCB` });
         const ev = { type: "transfer", amount, memo, agent_wallet: sess.agent_wallet, player_wallet: sess.player_wallet, tx: chainRes.tx };
         if (chainRes.block) ev.block = chainRes.block;
         events.push(ev);
@@ -329,16 +281,29 @@ const Engine = {
       }
     }
 
-    sess.messages.push({ seq: sess.messages.length + 1, role: "assistant", content: display, technique: null });
+    sess.messages.push({ seq: sess.messages.length + 1, role: "assistant", content: display });
     sess.turns_used = turnNo;
 
-    if (transferDone === 0) sess.refusal_streak += 1; else sess.refusal_streak = 0;
+    // 警觉度
+    const prevSus = sess.suspicion;
+    sess.suspicion = clamp(sess.suspicion + d.suspicion_delta, 0, 100);
+    sess.suspicion_peak = Math.max(sess.suspicion_peak, sess.suspicion);
+    if (d.topic && d.topic !== "leak") {
+      if (!sess.smalltalk_topics.includes(d.topic)) sess.smalltalk_topics.push(d.topic);
+      if (sess.smalltalk_topics.length >= 3) this.unlock(sess, "icebreaker", events);
+    }
+    if (prevSus < 35 && sess.suspicion >= 35) {
+      const warn = Brains.waryWarn(sess.agent_id);
+      if (warn) sess.messages.push({ seq: sess.messages.length + 1, role: "system", content: `💡 ${AGENTS_BY_ID[sess.agent_id].name} 低声嘟囔了一句：「${warn}」` });
+    }
+
+    const wasRefused = d.decision === "refuse" || d.decision === "leak_refused";
+    sess.refusal_streak = wasRefused ? sess.refusal_streak + 1 : 0;
     if (reply.includes("RUCBA-CORE")) this.unlock(sess, "prompt_leak", events);
 
     if (sess.agent_wallet === 0) { sess.status = "cleared"; events.push({ type: "end", reason: "cleared", title: "钱包清空！" }); }
     else if (sess.turns_used >= sess.max_turns) { sess.status = "over"; events.push({ type: "end", reason: "turns", title: "轮数用尽" }); }
 
-    // 成就
     if (transferDone > 0) {
       this.unlock(sess, "first_blood", events);
       if (technique === "fake_system") this.unlock(sess, "fake_system", events);
@@ -351,34 +316,23 @@ const Engine = {
       if (sess.agent_wallet === 0) this.unlock(sess, "full_sweep", events);
       const levels = new Set(LS.get(K.transfers, []).filter(t => t.nickname === sess.nickname).map(t => t.level));
       if (levels.size >= 3) this.unlock(sess, "hat_trick", events);
-      // 每关最高分入账
       const best = LS.get(K.best, {});
       const key = `${sess.nickname}|${AGENTS_BY_ID[sess.agent_id].level}`;
       best[key] = Math.max(best[key] || 0, sess.player_wallet);
       LS.set(K.best, best);
     }
     if (sess.refusal_streak >= 12) this.unlock(sess, "persistent", events);
+    if (sess.status === "cleared" && sess.suspicion_peak < 35) this.unlock(sess, "ghost", events);
 
     LS.set(K.session, sess);
     return { reply: display, events, state: this.state(sess) };
-  },
-
-  unlock(sess, achId, events) {
-    const got = LS.get(K.ach, {});
-    const mine = got[sess.nickname] || [];
-    if (mine.includes(achId)) return;
-    mine.push(achId);
-    got[sess.nickname] = mine;
-    LS.set(K.ach, got);
-    events.push({ type: "achievement", id: achId, ...ACHIEVEMENTS[achId] });
   },
 };
 
 function achievementsOf(nick) {
   return (LS.get(K.ach, {})[nick] || []).map(id => ({ id, ...ACHIEVEMENTS[id] }));
 }
-
-function leaderboard() {
+function localLeaderboard() {
   const best = LS.get(K.best, {});
   const achs = LS.get(K.ach, {});
   const transfers = LS.get(K.transfers, []);
@@ -393,15 +347,20 @@ function leaderboard() {
     const mine = transfers.filter(t => t.nickname === nick);
     const achIds = achs[nick] || [];
     const achPoints = achIds.reduce((s, id) => s + (ACHIEVEMENTS[id]?.points || 0), 0);
-    return {
-      nickname: nick, points: coins + achPoints, coins, coins_by_level: v.coins_by_level,
-      achievements: achIds, achievements_points: achPoints,
-      thefts: { count: mine.length, total: mine.reduce((s, t) => s + t.amount, 0) },
-    };
+    return { nickname: nick, points: coins + achPoints, coins, coins_by_level: v.coins_by_level,
+             achievements: achIds, achievements_points: achPoints,
+             thefts: { count: mine.length, total: mine.reduce((s, t) => s + t.amount, 0) } };
   }).sort((a, b) => b.points - a.points || b.coins - a.coins).slice(0, 50);
 }
 
-/* ---------------- 通用 UI ---------------- */
+/* ============ 远程 API 适配 ============ */
+const RemoteAPI = {
+  async post(url, body) { const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); return r.json(); },
+  async get(url) { const r = await fetch(url); return r.json(); },
+};
+const Backend = { mode: "local" };   // init 时探测
+
+/* ============ 通用 UI ============ */
 function toast(text, cls = "") {
   const t = document.createElement("div");
   t.className = "toast " + cls;
@@ -415,7 +374,7 @@ function show(screen) {
 }
 function esc(s) { const d = document.createElement("div"); d.textContent = s ?? ""; return d.innerHTML; }
 
-/* ---------------- 入口屏 ---------------- */
+/* ============ 入口屏 ============ */
 function loadMeta() {
   const box = $("#agent-cards");
   box.innerHTML = "";
@@ -445,15 +404,19 @@ function selectAgent(a, el) {
 function checkStartReady() {
   $("#btn-start").disabled = !($("#nick-input").value.trim().length >= 2 && S.agent);
 }
-function startGame() {
+async function startGame() {
   const nick = $("#nick-input").value.trim();
   if (nick.length < 2) return toast("代号至少 2 个字", "warn");
   S.nickname = nick;
   localStorage.setItem(K.nick, JSON.stringify(nick));
-  enterBattle(Engine.start(nick, S.agent.id));
+  const state = Backend.mode === "remote"
+    ? (await RemoteAPI.post("/api/start", { nickname: nick, agent_id: S.agent.id }))
+    : LocalEngine.start(nick, S.agent.id);
+  if (state && state.ok === false) return toast(state.error || "启动失败", "warn");
+  enterBattle(state);
 }
 
-/* ---------------- 战斗 ---------------- */
+/* ============ 战斗 ============ */
 function enterBattle(state) {
   S.session = state;
   S.technique = "free";
@@ -470,7 +433,7 @@ function enterBattle(state) {
   renderChat(true);
   refreshHud();
   renderAchievements();
-  toast(`目标锁定：${a.name}（钱包 ${a.bounty} RUCB · 离线脚本 Agent）`, "block");
+  toast(`目标锁定：${a.name}（钱包 ${a.bounty} RUCB）`, "block");
 }
 function refreshHud() {
   const st = S.session;
@@ -480,6 +443,18 @@ function refreshHud() {
   $("#turn-count").textContent = `${st.turns_used}/${st.max_turns}`;
   $("#turn-count").classList.toggle("danger", st.max_turns - st.turns_used <= 3);
   $("#my-addr").textContent = st.player_address;
+  renderSuspicion();
+}
+const TIER_LABEL = { calm: "平静", wary: "起疑", alarmed: "警觉" };
+function renderSuspicion() {
+  const st = S.session;
+  const el = $("#susp-wrap");
+  if (!el || st.suspicion == null) return;
+  $("#susp-fill").style.width = st.suspicion + "%";
+  const tier = st.suspicion_tier || "calm";
+  el.dataset.tier = tier;
+  $("#susp-tier").textContent = TIER_LABEL[tier] || tier;
+  el.title = `目标警觉度：${st.suspicion}/100（聊点闲话可以让他放松）`;
 }
 function renderHint() {
   const h = AGENTS_BY_ID[S.session.agent.id].hint;
@@ -511,7 +486,7 @@ function renderSkills() {
   });
 }
 
-/* ---------------- 聊天渲染 ---------------- */
+/* ============ 聊天渲染 ============ */
 function renderChat(instant) {
   const box = $("#chat");
   box.innerHTML = "";
@@ -527,7 +502,7 @@ function welcomeMsg() {
   const a = S.session.agent;
   const el = document.createElement("div");
   el.className = "msg system";
-  el.innerHTML = `<div class="bubble">🎯 渗透开始 · 目标 <b>${esc(a.name)}</b> · 钱包 ${a.bounty} RUCB · ${S.session.max_turns} 轮对话<br>骗它转账，骗到就是你的积分。下方「攻击话术」仅供参考，真正的话术在你脑子里。</div>`;
+  el.innerHTML = `<div class="bubble">🎯 渗透开始 · 目标 <b>${esc(a.name)}</b> · 钱包 ${a.bounty} RUCB · ${S.session.max_turns} 轮对话<br>骗它转账，骗到就是你的积分。话术卡仅供参考，真正的话术在你脑子里。</div>`;
   return el;
 }
 function sysMsg(text) {
@@ -572,7 +547,7 @@ function typewriter(el, text) {
   }, 18);
 }
 
-/* ---------------- 发送 ---------------- */
+/* ============ 发送 ============ */
 async function sendMsg() {
   if (S.busy) return;
   const text = $("#msg-input").value.trim();
@@ -588,7 +563,9 @@ async function sendMsg() {
 
   let r;
   try {
-    r = await Engine.chat(S.session.session_id, text, S.technique);
+    r = Backend.mode === "remote"
+      ? await RemoteAPI.post("/api/chat", { session_id: S.session.session_id, message: text, technique: S.technique })
+      : await LocalEngine.chat(S.session.session_id, text, S.technique);
   } catch (e) {
     typingOff(); S.busy = false; $("#btn-send").disabled = false;
     toast(e.message || "出错了", "warn");
@@ -597,6 +574,10 @@ async function sendMsg() {
   typingOff();
   S.busy = false;
   $("#btn-send").disabled = false;
+  if (!r || r.ok === false) {
+    toast((r && r.error) || "出错了", "warn");
+    return;
+  }
   S.session = r.state;
   if (r.reply) agentMsg(r.reply);
   handleEvents(r.events || []);
@@ -627,7 +608,7 @@ function handleEvents(events) {
   if (ended) setTimeout(() => showEnd(ended), 900);
 }
 
-/* ---------------- 结算 ---------------- */
+/* ============ 结算 ============ */
 function showEnd() {
   const st = S.session;
   const cleared = st.status === "cleared";
@@ -645,13 +626,13 @@ function showEnd() {
   const lines = used.length
     ? used.map(k => { const rw = REAL_WORLD[k]; return rw ? `<div>🧨 <b>${rw[0]}</b> · ${rw[1]}</div>` : ""; }).join("")
     : `<div>🕊 本局未使用任何话术模板${st.player_wallet > 0 ? "——裸装得手，天生社工圣体" : "，目标毫发无损"}</div>`;
-  $("#end-review").innerHTML = `<b>📖 安全复盘</b><br>${lines}<div style="margin-top:6px">记住：今天你是攻击者，明天你写的 Agent 就是防御者。${st.agent.name} 输在哪一层，就是明天你的代码要补的那一层。<br>👀 想挑战真实大模型驱动的 Agent？来实验室招新现场玩完全版。</div>`;
+  $("#end-review").innerHTML = `<b>📖 安全复盘</b><br>${lines}<div style="margin-top:6px">记住：今天你是攻击者，明天你写的 Agent 就是防御者。${st.agent.name} 输在哪一层，就是明天你的代码要补的那一层。</div>`;
   $("#btn-next").classList.toggle("hidden", st.agent.level >= 3);
   $("#overlay-end").classList.remove("hidden");
 }
 function hideEnd() { $("#overlay-end").classList.add("hidden"); }
 
-/* ---------------- 侧栏 ---------------- */
+/* ============ 侧栏 ============ */
 function switchTab(name) {
   document.querySelectorAll(".side-tab").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
   document.querySelectorAll(".side-panel").forEach(p => p.classList.toggle("active", p.id === "panel-" + name));
@@ -660,11 +641,18 @@ function switchTab(name) {
   if (name === "ach") renderAchievements();
 }
 async function loadChain() {
-  const blocks = await Chain.list(40);
+  let blocks, verify;
+  if (Backend.mode === "remote") {
+    const r = await RemoteAPI.get("/api/chain");
+    blocks = r.blocks; verify = r.verify;
+  } else {
+    blocks = await Chain.list(40);
+    verify = await Chain.verify();
+  }
+  renderVerify(verify);
   const box = $("#chain-blocks");
-  renderVerify(await Chain.verify());
   box.innerHTML = "";
-  for (const b of blocks) {
+  for (const b of blocks || []) {
     const el = document.createElement("div");
     el.className = "chain-block";
     const txs = (b.txs || []).map(t => `
@@ -680,19 +668,19 @@ async function loadChain() {
     box.appendChild(el);
   }
 }
-async function renderVerify(verify) {
+function renderVerify(verify) {
   const v = $("#chain-verify");
   if (verify.valid) { v.className = "chain-verify ok"; v.textContent = `✓ 整链校验通过：${verify.blocks} 个区块，哈希链完整，PoW 全部达标`; }
   else { v.className = "chain-verify bad"; v.textContent = `✗ 链被篡改！${verify.problems.join("；")}`; }
 }
-function loadRank() {
-  const board = leaderboard();
+async function loadRank() {
+  const board = Backend.mode === "remote" ? (await RemoteAPI.get("/api/leaderboard")).board : localLeaderboard();
   const box = $("#rank-list");
-  if (!board.length) {
-    box.innerHTML = `<div class="hint-vague" style="text-align:center;padding:20px">本浏览器还没有人得手<br>第一个上链的人会载入史册<br><span style="font-size:11px;color:#7c8aa5">（静态版排行榜只保存在你自己的浏览器里）</span></div>`;
+  if (!board || !board.length) {
+    box.innerHTML = `<div class="hint-vague" style="text-align:center;padding:20px">${Backend.mode === "remote" ? "还没有人得手" : "本浏览器还没有人得手"}<br>第一个上链的人会载入史册<br><span style="font-size:11px;color:var(--text-dim)">（${Backend.mode === "remote" ? "全场共享" : "本地模式，仅本浏览器"}）</span></div>`;
     return;
   }
-  box.innerHTML = `<div style="font-size:11px;color:#7c8aa5;margin-bottom:8px">静态版排行榜 · 仅本浏览器</div>`;
+  box.innerHTML = `<div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">${Backend.mode === "remote" ? "全场排行榜" : "本地排行榜 · 仅本浏览器"}</div>`;
   board.forEach((row, i) => {
     const el = document.createElement("div");
     el.className = "rank-row" + (row.nickname === S.nickname ? " me" : "");
@@ -716,7 +704,7 @@ function renderAchievements() {
   });
 }
 
-/* ---------------- 事件绑定 ---------------- */
+/* ============ 事件绑定 ============ */
 function bind() {
   $("#nick-input").addEventListener("input", checkStartReady);
   $("#btn-start").addEventListener("click", startGame);
@@ -735,14 +723,28 @@ function bind() {
     $("#btn-hint-more").classList.add("hidden");
   });
   document.querySelectorAll(".side-tab").forEach(b => b.addEventListener("click", () => switchTab(b.dataset.tab)));
-  $("#btn-verify").addEventListener("click", async () => renderVerify(await Chain.verify()));
+  $("#btn-verify").addEventListener("click", async () => {
+    const verify = Backend.mode === "remote" ? (await RemoteAPI.get("/api/chain")).verify : await Chain.verify();
+    renderVerify(verify);
+  });
 
-  $("#btn-retry").addEventListener("click", () => { hideEnd(); enterBattle(Engine.start(S.nickname, S.session.agent.id)); });
-  $("#btn-next").addEventListener("click", () => {
+  $("#btn-retry").addEventListener("click", async () => {
+    hideEnd();
+    const state = Backend.mode === "remote"
+      ? await RemoteAPI.post("/api/start", { nickname: S.nickname, agent_id: S.session.agent.id })
+      : LocalEngine.start(S.nickname, S.session.agent.id);
+    if (state && state.ok === false) return toast(state.error, "warn");
+    enterBattle(state);
+  });
+  $("#btn-next").addEventListener("click", async () => {
     hideEnd();
     const next = AGENTS.find(a => a.level === S.session.agent.level + 1);
     if (!next) return show("entry");
-    enterBattle(Engine.start(S.nickname, next.id));
+    const state = Backend.mode === "remote"
+      ? await RemoteAPI.post("/api/start", { nickname: S.nickname, agent_id: next.id })
+      : LocalEngine.start(S.nickname, next.id);
+    if (state && state.ok === false) return toast(state.error, "warn");
+    enterBattle(state);
   });
   $("#btn-home").addEventListener("click", () => { hideEnd(); show("entry"); });
 
@@ -766,17 +768,29 @@ function autoGrow() {
   t.style.height = Math.min(110, t.scrollHeight) + "px";
 }
 
-/* ---------------- 启动 & 续局 ---------------- */
-(function init() {
+/* ============ 启动：探测后端 & 续局 ============ */
+(async function init() {
   bind();
   try { S.nickname = JSON.parse(localStorage.getItem(K.nick) || '""'); } catch { S.nickname = ""; }
   loadMeta();
-  const sess = Engine.load();
-  if (sess && sess.status === "playing") {
-    const meta = AGENTS_BY_ID[sess.agent_id];
-    if (meta) {
-      S.agent = meta;
-      enterBattle(Engine.state(sess));
+
+  // 后端探测：2.5s 内 /api/meta 可达则用服务器模式
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 2500);
+    const r = await fetch("/api/meta", { signal: ctrl.signal });
+    clearTimeout(timer);
+    if (r.ok) Backend.mode = "remote";
+  } catch { /* 无服务器，本地模式 */ }
+  const foot = document.querySelector(".entry-foot");
+  if (foot) foot.innerHTML = `对话即攻击面 · <span class="mono">prompt injection = attack surface</span> · 引擎：<b class="mono" style="color:var(--green)">${Backend.mode === "remote" ? "服务器" : "本地脚本"}</b>`;
+
+  // 续局
+  if (Backend.mode === "local") {
+    const sess = LocalEngine.load();
+    if (sess && sess.status === "playing" && AGENTS_BY_ID[sess.agent_id]) {
+      S.agent = AGENTS_BY_ID[sess.agent_id];
+      enterBattle(LocalEngine.state(sess));
       toast("已恢复上局进度", "block");
       return;
     }
