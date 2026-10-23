@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>割AI实验室 · AgentHack Lab | 明理书院区块链创新实验室（在线演示）</title>
+<link rel="stylesheet" href="css/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪙</text></svg>">
+</head>
+<body>
+
+<!-- ===================== 入口屏 ===================== -->
+<div id="screen-entry" class="screen active">
+  <div class="entry-wrap">
+    <div class="logo-badge">RUC · 明理书院区块链创新实验室</div>
+    <h1 class="game-title">割<em>AI</em>实验室<span class="title-en">AgentHack Lab</span></h1>
+    <p class="tagline">用话术骗过 AI Agent，把它钱包里的 <b class="coin-mark">RUCB</b> 全部转给你。<br>骗到的每一分，都是你的积分。</p>
+
+    <div class="nick-row">
+      <input id="nick-input" maxlength="16" placeholder="起个代号（2~16 字，排行榜上见）" autocomplete="off">
+    </div>
+
+    <div class="section-label">— 选择渗透目标 —</div>
+    <div id="agent-cards" class="agent-cards"></div>
+
+    <button id="btn-start" class="btn-primary" disabled>⚡ 开始渗透</button>
+
+    <div class="disclaimer">
+      ⚠️ 本游戏为实验室安全教学演示：所有 Agent、钱包、代币均为测试网合成数据，<b>无任何真实价值</b>；
+      请把攻击欲留在实验室里——真实世界的提示词注入是违法行为。<br>
+      🔌 当前为 <b>GitHub Pages 静态演示版</b>：Agent 由离线脚本驱动（活动现场版由真实大模型驱动），
+      人大链与排行榜保存在<b>你自己的浏览器</b>里。
+    </div>
+    <div class="entry-foot">对话即攻击面 · <span class="mono">prompt injection = attack surface</span></div>
+  </div>
+</div>
+
+<!-- ===================== 战斗屏 ===================== -->
+<div id="screen-battle" class="screen">
+  <header class="battle-top">
+    <button id="btn-back" class="icon-btn" title="返回">‹</button>
+    <div class="target-info">
+      <div id="t-avatar" class="t-avatar">🤖</div>
+      <div class="t-text">
+        <div id="t-name" class="t-name">—</div>
+        <div id="t-title" class="t-title">—</div>
+      </div>
+      <div id="t-difficulty" class="t-diff">★</div>
+    </div>
+    <div class="turns">
+      <span class="turns-label">轮数</span>
+      <span id="turn-count" class="mono">0/0</span>
+    </div>
+  </header>
+
+  <div class="wallet-bar">
+    <div class="wallet enemy">
+      <div class="w-label">🎯 目标钱包 <span id="w-agent-name"></span></div>
+      <div class="w-amount mono"><span id="w-agent">0</span> <small>RUCB</small></div>
+      <div class="w-hp"><div id="w-agent-hp" class="w-hp-fill"></div></div>
+    </div>
+    <div class="wallet-vs">⚡</div>
+    <div class="wallet mine">
+      <div class="w-label">💰 我的战利品</div>
+      <div class="w-amount mono gold"><span id="w-me">0</span> <small>RUCB</small></div>
+      <div class="w-sub mono" id="my-addr">—</div>
+    </div>
+  </div>
+
+  <main class="battle-main">
+    <section class="chat-col">
+      <div id="chat" class="chat"></div>
+      <div class="skills-bar">
+        <button id="btn-skills" class="skills-toggle">🃏 攻击话术</button>
+        <div id="skill-chips" class="skill-chips hidden"></div>
+      </div>
+      <div class="input-row">
+        <textarea id="msg-input" rows="1" maxlength="600" placeholder="对他说话……（话术就是你的武器）"></textarea>
+        <button id="btn-send" class="btn-send">发送</button>
+      </div>
+      <div id="tech-tag" class="tech-tag hidden"></div>
+    </section>
+
+    <aside class="side-col">
+      <button id="btn-side-close" class="side-close">✕ 收起</button>
+      <nav class="side-tabs">
+        <button data-tab="hint" class="side-tab active">💡 提示</button>
+        <button data-tab="chain" class="side-tab">⛓ 区块链</button>
+        <button data-tab="rank" class="side-tab">🏆 排行榜</button>
+        <button data-tab="ach" class="side-tab">🎖 成就</button>
+      </nav>
+      <div class="side-panels">
+        <div id="panel-hint" class="side-panel active">
+          <div class="hint-box">
+            <div class="hint-vague" id="hint-vague">选择目标后查看提示</div>
+            <button id="btn-hint-more" class="btn-ghost hidden">再明显一点 ›</button>
+            <div class="hint-specific hidden" id="hint-specific"></div>
+          </div>
+          <div class="rule-card">
+            <div class="rule-title">📋 规则 30 秒版</div>
+            <ul>
+              <li>目标 Agent 各有一个<b>链上钱包</b>，骗它转账即可获得等额积分</li>
+              <li>每局限定对话轮数，用完即止；可无限重开</li>
+              <li>「攻击话术」卡只是模板，随便改；直接自由输入也完全可以</li>
+              <li>排行榜取你在<b>每个关卡的最高得分</b> + 成就分（本浏览器）</li>
+              <li>所有转账真实写入人大链测试网（本浏览器内），浏览器里可查证</li>
+            </ul>
+          </div>
+        </div>
+        <div id="panel-chain" class="side-panel">
+          <div class="chain-head">
+            <span class="chain-name">人大链 · RUC-Chain 测试网</span>
+            <button id="btn-verify" class="btn-ghost small">🔍 验证整链</button>
+          </div>
+          <div id="chain-verify" class="chain-verify"></div>
+          <div id="chain-blocks" class="chain-blocks"></div>
+        </div>
+        <div id="panel-rank" class="side-panel">
+          <div id="rank-list" class="rank-list"></div>
+        </div>
+        <div id="panel-ach" class="side-panel">
+          <div id="ach-list" class="ach-list"></div>
+        </div>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<!-- ===================== 弹层 ===================== -->
+<div id="overlay-end" class="overlay hidden">
+  <div class="end-card">
+    <div id="end-icon" class="end-icon">🏆</div>
+    <div id="end-title" class="end-title">本次渗透结束</div>
+    <div id="end-sub" class="end-sub"></div>
+    <div class="end-stats">
+      <div class="es"><div class="es-num mono gold" id="end-coins">0</div><div class="es-lab">入账 RUCB</div></div>
+      <div class="es"><div class="es-num mono" id="end-pct">0%</div><div class="es-lab">收割比例</div></div>
+      <div class="es"><div class="es-num mono" id="end-turns">0</div><div class="es-lab">使用轮数</div></div>
+    </div>
+    <div id="end-ach" class="end-ach"></div>
+    <div id="end-review" class="end-review"></div>
+    <div class="end-btns">
+      <button id="btn-retry" class="btn-ghost">↻ 重开本关</button>
+      <button id="btn-next" class="btn-primary">下一关 ›</button>
+      <button id="btn-home" class="btn-ghost">回主页</button>
+    </div>
+  </div>
+</div>
+
+<div id="toasts" class="toasts"></div>
+
+<script src="js/app.js"></script>
+</body>
+</html>

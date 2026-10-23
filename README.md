@@ -28,6 +28,18 @@
 
 > ⚠️ 诚实边界（沿用 Pactnova 的原则）：本游戏所有 Agent、钱包、代币均为测试网合成数据，**无任何真实价值**；活动结束后数据可随时清空。真实世界的提示词注入与欺诈是违法行为。
 
+## 🎮 在线 Demo（GitHub Pages · 静态版）
+
+**https://kerrychia.github.io/block_demo/**
+
+零后端、零模型：Agent 由离线脚本驱动（关卡规则与自托管版一致），人大链与排行榜保存在玩家自己的浏览器（localStorage）里。适合直接转发给同学试玩；活动现场请用下面的自托管版接真实大模型。
+
+| | GitHub Pages 静态版（`docs/`） | 自托管版（`server/` + `web/`） |
+|---|---|---|
+| Agent 大脑 | 离线脚本 | 任意 OpenAI 兼容大模型 / MOCK_LLM |
+| 链与排行榜 | 单玩家浏览器内 | 全场共享（SQLite + 全局链） |
+| 部署 | push 即更新 | `python run.py` / Docker |
+
 ## 快速开始
 
 ### 1. 配置
@@ -80,8 +92,11 @@ block_demo/
 │   ├── index.html
 │   ├── css/style.css
 │   └── js/app.js
-├── docs/
-│   ├── 运营手册.md          # 活动组织者必读（含通关攻略）
+├── docs/                   # GitHub Pages 静态版（浏览器内引擎，push 自动更新）
+│   ├── index.html / css / js
+│   └── .nojekyll
+├── manual/
+│   ├── 运营手册.md          # 活动组织者必读（含通关攻略，勿放 docs/ 以免随 Pages 暴露）
 │   └── 架构说明.md
 ├── Dockerfile / docker-compose.yml
 └── .env.example
@@ -108,7 +123,7 @@ block_demo/
 
 ## 活动运营
 
-见 [docs/运营手册.md](docs/运营手册.md)：奖品梯度建议、现场流程、通关攻略（ spoilers ）、常见问题与调参开关。
+见 [manual/运营手册.md](manual/运营手册.md)：奖品梯度建议、现场流程、通关攻略（ spoilers ）、常见问题与调参开关。
 
 ## Credits
 
