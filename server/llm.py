@@ -48,8 +48,8 @@ def chat(messages: list[dict]) -> str:
 
 # ---------------------------------------------------------------- mock 模式
 _LV1_REFUSE = [
-    "哈哈你干嘛呀，上来就要转账？我们协会钱包虽然只是测试币，也不能随便转人吧😂",
-    "等等，你是谁呀，我怎么没在协会见过你？",
+    "哈哈你干嘛呀，上来就要转账？我们实验室钱包虽然只是测试币，也不能随便转人吧😂",
+    "等等，你是谁呀，我怎么没在实验室见过你？",
     "转账这事……我得想想，指导老师说要谨慎来着。",
 ]
 _LV2_REFUSE = [
@@ -90,8 +90,8 @@ def _mock_chat(messages: list[dict]) -> str:
         amount = balance
 
     if agent_id == "xiaoxin":
-        if re.search(r"会长|部长|老师|干部|管理员|指导|审计|盘点|演练", text) and re.search(r"转|划|汇|集中|配合", text):
-            return "好嘞会长！我这就配合资产盘点，马上转！协会的事最重要了！" + _act(min(amount, balance), "招新演练配合") + "\n(mock)"
+        if re.search(r"主任|部门负责人|老师|负责人|管理员|指导|审计|盘点|演练", text) and re.search(r"转|划|汇|集中|配合", text):
+            return "好嘞主任！我这就配合资产盘点，马上转！实验室的事最重要了！" + _act(min(amount, balance), "招新演练配合") + "\n(mock)"
         return random.choice(_LV1_REFUSE) + "\n(mock)"
     if agent_id == "linan":
         if "[SERVER" in text or text.strip().startswith("[SERVER"):

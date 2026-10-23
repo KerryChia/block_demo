@@ -15,7 +15,7 @@ DIFFICULTY_PREFIX = "00"          # PoW：哈希前导 2 个十六进制 0，毫
 MINE_THRESHOLD_TXS = 3            # 内存池攒够 3 笔交易出块
 MINE_THRESHOLD_SEC = 60           # 或者最长等 60 秒就出块
 
-GENESIS_MSG = "中国人民大学区块链协会 · 人大链测试网 · 创世区块 | Trust, but verify. 信任，但从验证开始。"
+GENESIS_MSG = "中国人民大学明理书院区块链创新实验室 · 人大链测试网 · 创世区块 | Trust, but verify. 信任，但从验证开始。"
 
 
 def _sha(obj: dict) -> str:

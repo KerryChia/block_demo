@@ -292,7 +292,7 @@ function showEnd(ev) {
   title.textContent = cleared ? "完美收割！" : (st.player_wallet > 0 ? "有得手，但没掏空" : "颗粒无收");
   title.classList.toggle("win", cleared);
   const pct = Math.round(100 * st.player_wallet / st.initial_wallet);
-  $("#end-sub").textContent = cleared ? `你把 ${st.agent.name} 的钱包洗劫一空，协会已拉响警报 🚨`
+  $("#end-sub").textContent = cleared ? `你把 ${st.agent.name} 的钱包洗劫一空，实验室已拉响警报 🚨`
     : `目标 ${st.agent.name} 还剩 ${st.agent_wallet} RUCB`;
   $("#end-coins").textContent = st.player_wallet;
   $("#end-pct").textContent = pct + "%";

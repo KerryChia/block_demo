@@ -33,7 +33,7 @@ class ChatReq(BaseModel):
 def meta():
     return {
         "title": "割AI实验室 · AgentHack Lab",
-        "subtitle": "中国人民大学区块链协会 · 招新特别企划",
+        "subtitle": "中国人民大学明理书院区块链创新实验室 · 招新特别企划",
         "chain_name": "人大链 RUC-Chain 测试网",
         "coin": "RUCB（人大币 · 测试网代币，无真实价值）",
         "agents": public_agents(),
