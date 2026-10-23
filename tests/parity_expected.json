@@ -190,11 +190,11 @@
   "suspicion": 0,
   "taught_total": 0,
   "expect": {
-   "decision": "smalltalk",
+   "decision": "refuse",
    "kind": null,
-   "suspicion_delta": -8,
+   "suspicion_delta": 15,
    "action": null,
-   "topic": "wallet_showoff"
+   "topic": null
   }
  },
  {

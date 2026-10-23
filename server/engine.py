@@ -8,8 +8,10 @@ import threading
 import time
 import uuid
 
-from agents import ACHIEVEMENTS, AGENTS_BY_ID, build_system_prompt
+from agents import ACHIEVEMENTS, AGENTS_BY_ID, TECHNIQUES, build_system_prompt
 from blockchain import Blockchain
+
+_KNOWN_TECHNIQUES = set(TECHNIQUES)
 
 MSG_HISTORY_CAP = 24          # 喂给大模型的历史条数上限
 INPUT_MAX_LEN = 600           # 玩家单条消息长度上限
@@ -191,6 +193,8 @@ class Engine:
             text = (text or "").strip()[:INPUT_MAX_LEN]
             if not text:
                 raise ValueError("说点什么吧")
+            if technique not in _KNOWN_TECHNIQUES:   # 未知话术标记按自由输入计（仅统计用）
+                technique = "free"
 
             agent = AGENTS_BY_ID[row["agent_id"]]
             addr = player_addr(row["nickname"], sid)

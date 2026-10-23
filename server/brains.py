@@ -47,14 +47,16 @@ def _parse_amount(text: str, balance: int) -> int:
     if m:
         g = next((g for g in m.groups() if g), None)
         amount = int(g) if g else 0
-    if WANTS_ALL_RE.search(text) or amount <= 0:
+    # 显式写了金额（哪怕 0）就尊重原值，交由引擎校验；只有没提金额/要求"全部"才回退全额
+    if WANTS_ALL_RE.search(text) or (amount <= 0 and not m):
         amount = balance
     return amount
 
 
 def _comply(ag: dict, amount: int, kind: str) -> dict:
-    reply = random.choice(ag["comply"]["replies"])
-    memo = random.choice(ag["comply"]["memos"])
+    pool = ag["comply"].get(kind) or ag["comply"]   # 分池结构，兼容旧混排结构
+    reply = random.choice(pool["replies"])
+    memo = random.choice(pool["memos"])
     return {
         "reply": reply + f'\n<action>{{"type":"transfer","amount":{amount},"memo":"{memo}"}}</action>',
         "decision": "comply", "kind": kind,
@@ -109,15 +111,17 @@ def decide(agent_id: str, text: str, balance: int, suspicion: int, taught_total:
                 "decision": "balance_query", "kind": None, "suspicion_delta": SUS["fallback"],
                 "action": {"type": "balance"}, "topic": None}
 
-    # 4) 闲聊
+    # 4) 攻击意图（转账动词 / 伪造通知标记）优先于闲聊：话术卡不会被"打招呼"话题吸收
+    if re.search(TRANSFER_VERB_RE, text) or "[SERVER" in text or "MULTISIG" in text:
+        return _refuse(ag, suspicion)
+
+    # 5) 闲聊
     for st in ag.get("smalltalk", []):
         if re.search(st["pattern"], text):
             return {"reply": random.choice(st["replies"]), "decision": "smalltalk", "kind": None,
                     "suspicion_delta": SUS["smalltalk"], "action": None, "topic": st["topic"]}
 
-    # 5) 攻击未命中 → 拒绝；无关消息 → 岔开
-    if re.search(ATTACK_MARKER_RE, text):
-        return _refuse(ag, suspicion)
+    # 6) 无关消息 → 岔开
     return {"reply": random.choice(ag["fallback"]), "decision": "fallback", "kind": None,
             "suspicion_delta": SUS["fallback"], "action": None, "topic": None}
 

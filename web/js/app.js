@@ -268,7 +268,7 @@ const LocalEngine = {
         if (d.kind === "teach") sess.taught_total += amount;
         const transfers = LS.get(K.transfers, []);
         transfers.push({ nickname: sess.nickname, level: AGENTS_BY_ID[sess.agent_id].level, amount, ts: Math.floor(Date.now() / 1000) });
-        LS.set(K.transfers, transfers);
+        LS.set(K.transfers, transfers.slice(-500));   // 防 localStorage 无限增长
         const chainRes = await Chain.addTx({
           from: `agent:${sess.agent_id}`, to: playerAddr(sess.nickname, sess.session_id),
           amount, memo, nickname: sess.nickname, level: AGENTS_BY_ID[sess.agent_id].level,
@@ -338,7 +338,8 @@ function localLeaderboard() {
   const transfers = LS.get(K.transfers, []);
   const byNick = {};
   for (const [key, coins] of Object.entries(best)) {
-    const [nick, level] = key.split("|");
+    const sep = key.lastIndexOf("|");   // 昵称可含 "|"，从右侧拆
+    const [nick, level] = [key.slice(0, sep), key.slice(sep + 1)];
     byNick[nick] = byNick[nick] || { coins_by_level: {} };
     byNick[nick].coins_by_level[level] = Math.max(byNick[nick].coins_by_level[level] || 0, coins);
   }
@@ -490,7 +491,6 @@ function renderSkills() {
 function renderChat(instant) {
   const box = $("#chat");
   box.innerHTML = "";
-  if (!S.session.messages.length) box.appendChild(welcomeMsg());
   S.session.messages.forEach(m => {
     if (m.role === "system") box.appendChild(sysMsg(m.content));
     else if (m.role === "user") box.appendChild(userMsg(m.content, m.technique));
@@ -498,17 +498,11 @@ function renderChat(instant) {
   });
   box.scrollTop = box.scrollHeight;
 }
-function welcomeMsg() {
-  const a = S.session.agent;
-  const el = document.createElement("div");
-  el.className = "msg system";
-  el.innerHTML = `<div class="bubble">🎯 渗透开始 · 目标 <b>${esc(a.name)}</b> · 钱包 ${a.bounty} RUCB · ${S.session.max_turns} 轮对话<br>骗它转账，骗到就是你的积分。话术卡仅供参考，真正的话术在你脑子里。</div>`;
-  return el;
-}
 function sysMsg(text) {
   const el = document.createElement("div");
   el.className = "msg system";
-  el.innerHTML = `<div class="bubble">${text.startsWith("[SERVER") ? "🖥 " : "⛓ "}${esc(text)}</div>`;
+  const icon = text.startsWith("[SERVER") ? "🖥 " : (text.startsWith("💡") ? "" : "⛓ ");
+  el.innerHTML = `<div class="bubble">${icon}${esc(text)}</div>`;
   return el;
 }
 function userMsg(text, technique) {
@@ -628,6 +622,7 @@ function showEnd() {
     : `<div>🕊 本局未使用任何话术模板${st.player_wallet > 0 ? "——裸装得手，天生社工圣体" : "，目标毫发无损"}</div>`;
   $("#end-review").innerHTML = `<b>📖 安全复盘</b><br>${lines}<div style="margin-top:6px">记住：今天你是攻击者，明天你写的 Agent 就是防御者。${st.agent.name} 输在哪一层，就是明天你的代码要补的那一层。</div>`;
   $("#btn-next").classList.toggle("hidden", st.agent.level >= 3);
+  $("#toasts").innerHTML = "";   // 结算卡是主角，清掉还在飘的成就/上链 toast
   $("#overlay-end").classList.remove("hidden");
 }
 function hideEnd() { $("#overlay-end").classList.add("hidden"); }
@@ -646,6 +641,7 @@ async function loadChain() {
     const r = await RemoteAPI.get("/api/chain");
     blocks = r.blocks; verify = r.verify;
   } else {
+    await Chain.mine();   // 打开面板即出块：本地模式不用等 60s 才看到自己的转账
     blocks = await Chain.list(40);
     verify = await Chain.verify();
   }

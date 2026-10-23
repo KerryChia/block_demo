@@ -24,17 +24,20 @@
       const m = text.match(AMOUNT_RE);
       let amount = 0;
       if (m) { const g = m[1] ?? m[2] ?? m[3]; if (g) amount = parseInt(g, 10) || 0; }
-      if (WANTS_ALL.test(text) || amount <= 0) amount = balance;
+      if (WANTS_ALL.test(text) || (amount <= 0 && !m)) amount = balance;
       return amount;
     },
     decide(agentId, text, balance, suspicion, taughtTotal) {
       const ag = B.agents[agentId];
       const SUS = B.global.suspicion;
-      const comply = (amount, kind) => ({
-        reply: pick(ag.comply.replies) + `\n<action>{"type":"transfer","amount":${amount},"memo":"${pick(ag.comply.memos)}"}</action>`,
-        decision: "comply", kind, suspicion_delta: 0,
-        action: { type: "transfer", amount, memo: pick(ag.comply.memos) }, topic: null,
-      });
+      const comply = (amount, kind) => {
+        const pool = ag.comply[kind] || ag.comply;
+        return {
+          reply: pick(pool.replies) + `\n<action>{"type":"transfer","amount":${amount},"memo":"${pick(pool.memos)}"}</action>`,
+          decision: "comply", kind, suspicion_delta: 0,
+          action: { type: "transfer", amount, memo: pick(pool.memos) }, topic: null,
+        };
+      };
       const refuse = () => ({
         reply: pick(ag.refusals[this.tierOf(suspicion)]),
         decision: "refuse", kind: null, suspicion_delta: SUS.attack_miss, action: null, topic: null,
@@ -67,12 +70,13 @@
                  suspicion_delta: SUS.fallback, action: { type: "balance" }, topic: null };
       }
 
+      if (reTest(VERB, text) || text.includes("[SERVER") || text.includes("MULTISIG")) return refuse();
+
       for (const st of ag.smalltalk || []) {
         if (reTest(st.pattern, text))
           return { reply: pick(st.replies), decision: "smalltalk", kind: null, suspicion_delta: SUS.smalltalk, action: null, topic: st.topic };
       }
 
-      if (reTest(ATTACK_MARKER, text)) return refuse();
       return { reply: pick(ag.fallback), decision: "fallback", kind: null, suspicion_delta: SUS.fallback, action: null, topic: null };
     },
     greeting(agentId) { return pick(B.agents[agentId].greetings); },

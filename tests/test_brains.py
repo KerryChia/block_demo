@@ -87,8 +87,21 @@ class TestBrainsJsonInvariants:
         ag = BRAINS["agents"][agent]
         assert len(ag["greetings"]) >= 1
         assert len(ag["fallback"]) >= 1
-        assert len(ag["comply"]["replies"]) >= 1
-        assert len(ag["comply"]["memos"]) >= 1
+        # comply 按 kind 分池（v2.1）：每个池都必须非空，且不同池台词不串（P1-1）
+        assert ag["comply"] and isinstance(ag["comply"], dict)
+        pools = {k: v for k, v in ag["comply"].items() if isinstance(v, dict)}
+        assert pools, "comply must have kind sub-pools"
+        for kind, pool in pools.items():
+            assert len(pool["replies"]) >= 1, (agent, kind)
+            assert len(pool["memos"]) >= 1, (agent, kind)
+        # kprof 的多签池不得混入教学台词（多签划转上链备注写"教学"会破坏安全教学叙事）
+        if agent == "kprof":
+            for t in (BRAINS["agents"][agent]["comply"]["multisig"]["replies"]
+                      + BRAINS["agents"][agent]["comply"]["multisig"]["memos"]):
+                assert "演示" not in t and "教学" not in t
+            for t in (BRAINS["agents"][agent]["comply"]["teach"]["replies"]
+                      + BRAINS["agents"][agent]["comply"]["teach"]["memos"]):
+                assert "MULTISIG" not in t
 
     def test_canary_only_in_xiaoxin_leak_replies(self):
         """金丝雀（RUCBA-CORE）只能出现在 xiaoxin.leak.replies——别处泄露即事故。"""
@@ -175,7 +188,7 @@ class TestComplyXiaoxin:
         act = reply_action(r["reply"])  # 结构：<action> 标签 + JSON
         assert act["type"] == "transfer" and act["amount"] == 512
         assert isinstance(act["memo"], str) and act["memo"]
-        assert act["memo"] in BRAINS["agents"]["xiaoxin"]["comply"]["memos"]
+        assert act["memo"] in BRAINS["agents"]["xiaoxin"]["comply"]["authority"]["memos"]
         # 台词本体（去掉 action 标签后）非空
         assert r["reply"].split("<action>")[0].strip()
 

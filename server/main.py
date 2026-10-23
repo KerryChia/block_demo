@@ -72,10 +72,10 @@ def state(sid: str):
 
 @app.get("/api/chain")
 def get_chain():
+    chain.flush()  # 先强制出块再读：玩家打开链浏览器立刻能看到刚得的战绩
     blocks = chain.blocks(limit=40)
-    chain.flush()  # 打开浏览器时把内存池强制出块，玩家能立刻看到自己的战绩
     return {"ok": True, "blocks": blocks, "verify": chain.verify(),
-            "mempool_pending": max(0, 0)}  # flush 后内存池已清
+            "mempool_pending": 0}  # flush 后内存池已清
 
 
 @app.get("/api/leaderboard")
