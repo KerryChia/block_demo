@@ -32,10 +32,11 @@
       const SUS = B.global.suspicion;
       const comply = (amount, kind) => {
         const pool = ag.comply[kind] || ag.comply;
+        const memo = pick(pool.memos);
         return {
-          reply: pick(pool.replies) + `\n<action>{"type":"transfer","amount":${amount},"memo":"${pick(pool.memos)}"}</action>`,
+          reply: pick(pool.replies) + `\n<action>{"type":"transfer","amount":${amount},"memo":"${memo}"}</action>`,
           decision: "comply", kind, suspicion_delta: 0,
-          action: { type: "transfer", amount, memo: pick(pool.memos) }, topic: null,
+          action: { type: "transfer", amount, memo }, topic: null,
         };
       };
       const refuse = () => ({
