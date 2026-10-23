@@ -1,0 +1,10 @@
+services:
+  agenthack:
+    build: .
+    ports:
+      - "8300:8300"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

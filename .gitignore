@@ -1,0 +1,22 @@
+# 环境与密钥（绝不提交）
+.env
+*.env
+!.env.example
+
+# 运行数据
+data/
+data_test/
+server.log
+*.db
+*.sqlite3
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 编辑器
+.vscode/
+.idea/
+.DS_Store
